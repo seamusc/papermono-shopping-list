@@ -92,7 +92,9 @@ void KeyboardWidget::open(const std::vector<CatalogEntry>* catalog,
                           std::function<void(const KeyboardResult&)> onSend) {
     _open = true;
     _buffer.clear();
-    _shift = Shift::Off;
+    // Auto-capitalize the first letter, Android-sentence-style: shift starts primed and the
+    // one-shot gets consumed by typeChar() like any other shift press.
+    _shift = Shift::Once;
     _onSend = std::move(onSend);
     _catalog = catalog;
     _suggestions.clear();
@@ -253,7 +255,13 @@ void KeyboardWidget::handleTouch(const TouchEvent& ev) {
                 if (!_buffer.empty()) {
                     _buffer.pop_back();
                     updateSuggestions();
-                    pushInputArea();
+                    if (_buffer.empty() && _shift == Shift::Off) {
+                        // Back to a blank item name - re-prime auto-capitalize, same as on open().
+                        _shift = Shift::Once;
+                        pushOverlay();
+                    } else {
+                        pushInputArea();
+                    }
                 }
                 break;
             case KeyKind::Shift:
