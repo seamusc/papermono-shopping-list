@@ -65,7 +65,19 @@ def create_category(conn: sqlite3.Connection, name: str) -> CategoryOut:
         "SELECT ?, COALESCE(MAX(sort_order), -1) + 1 FROM categories WHERE name != ?",
         (name, UNCATEGORIZED_NAME),
     )
-    return get_category(conn, cur.lastrowid)
+    created = get_category(conn, cur.lastrowid)
+    log.info(
+        "added category %r (id %d, sort_order %d)",
+        created.name,
+        created.id,
+        created.sort_order,
+        extra={
+            "category.id": created.id,
+            "category.name": created.name,
+            "category.sort_order": created.sort_order,
+        },
+    )
+    return created
 
 
 def update_category(conn: sqlite3.Connection, category_id: int, name: str, sort_order: int) -> CategoryOut:
@@ -154,8 +166,9 @@ def delete_item(conn: sqlite3.Connection, item_id: int) -> None:
     conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
 
 
-def clear_purchased(conn: sqlite3.Connection) -> None:
-    conn.execute("DELETE FROM items WHERE purchased = 1")
+def clear_purchased(conn: sqlite3.Connection) -> int:
+    """Delete every ticked-off item and return how many there were."""
+    return conn.execute("DELETE FROM items WHERE purchased = 1").rowcount
 
 
 # ---------------------------------------------------------------------------- catalog
@@ -225,6 +238,11 @@ def _classify(conn: sqlite3.Connection, item_name: str, classifier: Classifier) 
     if not aisles:
         # Nothing to choose between yet; don't let the classifier invent the first aisle.
         telemetry.classifications.add(1, {"outcome": "skipped"})
+        log.info(
+            "skipped classifying %r: no aisles exist yet",
+            item_name,
+            extra={"item.name": item_name, "classifier.outcome": "skipped"},
+        )
         return uncategorized_id(conn)
 
     with telemetry.tracer.start_as_current_span("classify item") as span:
@@ -235,7 +253,16 @@ def _classify(conn: sqlite3.Connection, item_name: str, classifier: Classifier) 
         except ClassificationError as exc:
             outcome = "failed"
             span.record_exception(exc)
-            log.warning("classifying %r failed: %s", item_name, exc)
+            log.warning(
+                "classifying %r failed: %s",
+                item_name,
+                exc,
+                extra={
+                    "item.name": item_name,
+                    "classifier.outcome": "failed",
+                    "classifier.duration_ms": round((time.perf_counter() - start) * 1000),
+                },
+            )
             category_id = uncategorized_id(conn)
         else:
             existing = find_category_by_name(conn, result.category_name)
@@ -244,7 +271,18 @@ def _classify(conn: sqlite3.Connection, item_name: str, classifier: Classifier) 
                 existing.id if existing is not None else create_category(conn, result.category_name).id
             )
             span.set_attribute("category.name", result.category_name)
-            log.info("classified %r -> %r (%s)", item_name, result.category_name, outcome)
+            log.info(
+                "classified %r -> %r (%s)",
+                item_name,
+                result.category_name,
+                outcome,
+                extra={
+                    "item.name": item_name,
+                    "category.name": result.category_name,
+                    "classifier.outcome": outcome,
+                    "classifier.duration_ms": round((time.perf_counter() - start) * 1000),
+                },
+            )
         span.set_attribute("classifier.outcome", outcome)
         elapsed = time.perf_counter() - start
     telemetry.classifications.add(1, {"outcome": outcome})

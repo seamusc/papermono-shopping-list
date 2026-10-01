@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,11 +23,34 @@ STATIC_DIR = PACKAGE_DIR / "static"
 # Uvicorn only configures its own loggers, so without this the app's INFO lines (notably which firmware
 # version each device reports on sync) would be dropped, leaving only warnings.
 _app_log = logging.getLogger("shopping_list")
+_STANDARD_RECORD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {
+    "message",
+    "asctime",
+}
+
+
+class _KeyValueFormatter(logging.Formatter):
+    """The usual one-line format, plus any structured `extra=` attributes as trailing key=value pairs.
+
+    The OpenTelemetry handler exports those attributes as fields on its own; this is so the same
+    detail is visible in the service's plain journal/stdout output too.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        extras = [f"{k}={v!r}" for k, v in record.__dict__.items() if k not in _STANDARD_RECORD_ATTRS]
+        return f"{text} [{' '.join(extras)}]" if extras else text
+
+
 if not _app_log.handlers:
     _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+    _handler.setFormatter(_KeyValueFormatter("%(levelname)s:     %(name)s - %(message)s"))
     _app_log.addHandler(_handler)
     _app_log.setLevel(logging.INFO)
+
+# Paths that are polled or fire per keystroke; their successful requests aren't worth a log line each,
+# but a failure still is.
+_QUIET_PATH_PREFIXES = ("/api/health", "/api/catalog/suggest", "/static", "/flash")
 
 
 def _static_version() -> str:
@@ -48,7 +72,18 @@ def create_app(settings: Settings | None = None, classifier: Classifier | None =
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         init_db(settings.db_path)
+        _app_log.info(
+            "server started",
+            extra={
+                "config.db_path": str(settings.db_path),
+                "config.classifier": settings.classifier,
+                "config.timezone": str(app.state.tz),
+                "config.firmware_target": settings.firmware_version or "none",
+                "config.telemetry_enabled": settings.telemetry_enabled,
+            },
+        )
         yield
+        _app_log.info("server stopping")
 
     app = FastAPI(title="PaperMono Shopping List", lifespan=lifespan)
     app.state.settings = settings
@@ -69,6 +104,39 @@ def create_app(settings: Settings | None = None, classifier: Classifier | None =
         # a revalidation, which is still a cheap 304 when nothing changed.
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @app.middleware("http")
+    async def log_requests(request: Request, call_next):
+        start = time.perf_counter()
+        attrs = {"http.method": request.method, "http.target": request.url.path}
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = round((time.perf_counter() - start) * 1000)
+            _app_log.exception(
+                "unhandled error on %s %s",
+                request.method,
+                request.url.path,
+                extra={**attrs, "http.duration_ms": duration_ms},
+            )
+            raise
+        status = response.status_code
+        if status >= 400 or not request.url.path.startswith(_QUIET_PATH_PREFIXES):
+            level = logging.ERROR if status >= 500 else logging.WARNING if status >= 400 else logging.INFO
+            _app_log.log(
+                level,
+                "%s %s -> %d",
+                request.method,
+                request.url.path,
+                status,
+                extra={
+                    **attrs,
+                    "http.status_code": status,
+                    "http.duration_ms": round((time.perf_counter() - start) * 1000),
+                    "client.address": request.client.host if request.client else None,
+                },
+            )
         return response
 
     if settings.telemetry_enabled:

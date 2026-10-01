@@ -58,7 +58,19 @@ def create_item(
     item = repository.create_item(conn, name, category_id, quantity, unit)
     telemetry.items_created.add(1)
     trace.get_current_span().set_attribute("item.name", name)
-    log.info("added item %r (id %d)", name, item.id)
+    log.info(
+        "added item %r (id %d)",
+        name,
+        item.id,
+        extra={
+            "item.id": item.id,
+            "item.name": name,
+            "category.id": item.category_id,
+            "category.name": item.category_name,
+            "item.quantity": quantity,
+            "item.unit": unit,
+        },
+    )
     return item
 
 
@@ -85,14 +97,61 @@ def update_item(item_id: int, body: ItemUpdate, conn: sqlite3.Connection = Depen
 
     if body.purchased is not None and body.purchased != item.purchased:
         telemetry.items_purchased.add(1, {"purchased": body.purchased})
-        log.info("item %r marked %s", name, "purchased" if body.purchased else "not purchased")
+        log.info(
+            "item %r marked %s",
+            name,
+            "purchased" if body.purchased else "not purchased",
+            extra={"item.id": item_id, "item.name": name, "item.purchased": body.purchased},
+        )
     trace.get_current_span().set_attribute("item.name", name)
+
+    new_category_id = item.category_id if body.category_id is None else body.category_id
+    if new_category_id != item.category_id:
+        log.info(
+            "moved item %r (id %d): category %s -> %d",
+            name,
+            item_id,
+            item.category_id,
+            new_category_id,
+            extra={
+                "item.id": item_id,
+                "item.name": name,
+                "category.old_id": item.category_id,
+                "category.id": new_category_id,
+            },
+        )
+    if name != item.name:
+        log.info(
+            "renamed item %r -> %r (id %d)",
+            item.name,
+            name,
+            item_id,
+            extra={"item.id": item_id, "item.name": name, "item.old_name": item.name},
+        )
+    if (quantity, unit) != (item.quantity, item.unit):
+        log.info(
+            "changed quantity of item %r (id %d): %s %s -> %s %s",
+            name,
+            item_id,
+            item.quantity,
+            item.unit,
+            quantity,
+            unit,
+            extra={
+                "item.id": item_id,
+                "item.name": name,
+                "item.old_quantity": item.quantity,
+                "item.old_unit": item.unit,
+                "item.quantity": quantity,
+                "item.unit": unit,
+            },
+        )
 
     return repository.update_item(
         conn,
         item_id,
         name=name,
-        category_id=item.category_id if body.category_id is None else body.category_id,
+        category_id=new_category_id,
         purchased=item.purchased if body.purchased is None else body.purchased,
         quantity=quantity,
         unit=unit,
@@ -101,11 +160,16 @@ def update_item(item_id: int, body: ItemUpdate, conn: sqlite3.Connection = Depen
 
 @router.delete("/{item_id}", status_code=204)
 def delete_item(item_id: int, conn: sqlite3.Connection = Depends(get_db)):
-    if repository.get_item(conn, item_id) is None:
+    item = repository.get_item(conn, item_id)
+    if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
     repository.delete_item(conn, item_id)
+    log.info(
+        "deleted item %r (id %d)", item.name, item_id, extra={"item.id": item_id, "item.name": item.name}
+    )
 
 
 @router.post("/clear-purchased", status_code=204)
 def clear_purchased(conn: sqlite3.Connection = Depends(get_db)):
-    repository.clear_purchased(conn)
+    removed = repository.clear_purchased(conn)
+    log.info("cleared %d purchased item(s)", removed, extra={"items.removed": removed})
