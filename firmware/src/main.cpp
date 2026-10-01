@@ -39,6 +39,12 @@ bool g_syncRequested = false;       // a local edit (or SYNC NOW) wants a sync a
 uint32_t g_syncCooldownUntilMs = 0; // set after a failed sync
 uint32_t g_lastBatteryCheckMs = 0;
 
+// Sleep bookkeeping (see maybeSleep()).
+bool g_backgroundWake = false; // woken by the sync timer and nobody has touched anything since
+bool g_quietSync = false;      // nothing touched since waking: a sync must not draw on the panel
+bool g_sawInput = false;       // a touch or key press happened since the last wake
+uint32_t g_lastActivityMs = 0; // last input, or the end of the last sync
+
 constexpr uint32_t kBatteryCheckIntervalMs = 5000;
 constexpr uint32_t kKeyDebounceMs = 40;
 
@@ -62,6 +68,19 @@ struct DebouncedKey {
 };
 DebouncedKey g_key1;
 DebouncedKey g_key2;
+
+bool syncIsStale();
+
+// Someone is (or was just) using the device, or a sync just ended: restart the idle clock. `input`
+// marks a real touch or key press, which also ends the "quiet" mode where a sync leaves the panel alone.
+void noteActivity(bool input) {
+    g_lastActivityMs = millis();
+    if (input) {
+        g_sawInput = true;
+        g_backgroundWake = false;
+        g_quietSync = false;
+    }
+}
 
 bool overlayOpen() {
     return KeyboardWidget::getInstance().isOpen() || SettingsScreen::getInstance().isOpen() ||
@@ -108,26 +127,38 @@ void runSync(uint32_t wifiTimeoutMs) {
     const std::vector<Category> previousCategories = g_data.categories;
     const std::vector<Item> previousItems = g_data.items;
 
+    // A sync right after a wake runs with nobody touching anything. Leave the panel alone unless the
+    // result changes what it should show: the panel keeps its image through sleep, and every refresh
+    // costs power.
+    const bool quiet = g_quietSync;
+    const bool wasOk = SyncClient::getInstance().status().lastOk;
+
     // Painted immediately, before the blocking call below - a tap-triggered sync (see
     // Config::kTapSyncStaleMs) can otherwise take several seconds of Wi-Fi connect + HTTP with no
     // feedback, which looks like the tap did nothing.
-    g_list.setSyncing(true);
+    if (!quiet) g_list.setSyncing(true);
     const bool ok = SyncClient::getInstance().sync(g_data, wifiTimeoutMs);
-    g_list.setSyncing(false);
+    if (!quiet) g_list.setSyncing(false);
+    bool changed = false;
     if (ok) {
-        BSP::getInstance().setLedSyncOk();
+        if (!quiet) BSP::getInstance().setLedSyncOk();
         g_syncCooldownUntilMs = 0;
         g_list.onDataChanged();
-        if (g_data.categories != previousCategories || g_data.items != previousItems) showListFull();
+        changed = g_data.categories != previousCategories || g_data.items != previousItems;
+        if (changed) showListFull();
         // Reaching the server is what proves a freshly installed firmware works.
         Ota::getInstance().confirmRunning();
         maybeUpdateFirmware();
     } else {
-        BSP::getInstance().setLedSyncFailed();
+        if (!quiet) BSP::getInstance().setLedSyncFailed();
         g_syncCooldownUntilMs = millis() + Config::kFailedSyncCooldownMs;
     }
+    // A quiet sync that flipped between working and failing changes what the header should say
+    // ("Synced ..." / "Offline, last ..."), which is worth one header repaint.
+    if (quiet && !changed && ok != wasOk) g_list.setSyncing(false);
     g_nextSyncMs = millis() + nextSyncDelayMs(ok);
     g_syncRequested = false;
+    noteActivity(false);
 }
 
 void maybeSync() {
@@ -166,18 +197,13 @@ void handleTouch() {
     TouchManager& touch = TouchManager::getInstance();
     if (!touch.hasEvent()) return;
     const TouchEvent ev = touch.popEvent();
+    noteActivity(true);
 
     // Any tap is a sign someone's actively using the device - opportunistically sync if the last one
     // is getting stale, rather than leaving the list stale until the next scheduled sync, which can
     // be hours away. Safe to request unconditionally even while an overlay is open:
     // maybeSync() only actually runs a sync once overlayOpen() is false.
-    if (ev.type == TouchEventType::Click) {
-        const SyncStatus& status = SyncClient::getInstance().status();
-        if (status.lastSuccessMs == 0 ||
-            (int32_t)(millis() - status.lastSuccessMs) >= (int32_t)Config::kTapSyncStaleMs) {
-            g_syncRequested = true;
-        }
-    }
+    if (ev.type == TouchEventType::Click && syncIsStale()) g_syncRequested = true;
 
     const bool wasOverlay = overlayOpen();
     if (KeyboardWidget::getInstance().isOpen()) KeyboardWidget::getInstance().handleTouch(ev);
@@ -193,8 +219,14 @@ void handleTouch() {
 void handleKeys() {
     if (overlayOpen()) return;
     const uint32_t now = millis();
-    if (g_key1.pressed(digitalRead(Pins::KEY1) == LOW, now)) g_list.page(-1);
-    if (g_key2.pressed(digitalRead(Pins::KEY2) == LOW, now)) g_list.page(1);
+    if (g_key1.pressed(digitalRead(Pins::KEY1) == LOW, now)) {
+        noteActivity(true);
+        g_list.page(-1);
+    }
+    if (g_key2.pressed(digitalRead(Pins::KEY2) == LOW, now)) {
+        noteActivity(true);
+        g_list.page(1);
+    }
 }
 
 void checkBattery() {
@@ -206,6 +238,70 @@ void checkBattery() {
     if (!state.isCharging && state.voltageMv <= BSP::LOW_BATTERY_CUTOFF_MV) {
         BSP::getInstance().lowBatteryShutdown(); // does not return
     }
+}
+
+// The list is stale enough that a tap (or a wake) should sync it.
+bool syncIsStale() {
+    const SyncStatus& status = SyncClient::getInstance().status();
+    return status.lastSuccessMs == 0 ||
+           (int32_t)(millis() - status.lastSuccessMs) >= (int32_t)Config::kTapSyncStaleMs;
+}
+
+void closeOverlays() {
+    KeyboardWidget::getInstance().close();
+    SettingsScreen::getInstance().close();
+    QuantityScreen::getInstance().close();
+    showListFull();
+}
+
+// Back from a sleep: work out what to do next from what woke us.
+void onWake(WakeReason reason) {
+    g_lastActivityMs = millis();
+    g_sawInput = false;
+    g_quietSync = true; // stays quiet until something is actually touched
+    // The key that woke us may still be down. Don't read that as a page turn.
+    g_key1.rawPrev = g_key1.stable = digitalRead(Pins::KEY1) == LOW;
+    g_key2.rawPrev = g_key2.stable = digitalRead(Pins::KEY2) == LOW;
+
+    if (reason == WakeReason::Timer) {
+        // The timer was set to the moment the sync falls due, so sync now without consulting the clock.
+        g_backgroundWake = true;
+        g_nextSyncMs = millis();
+    } else {
+        // A person woke it and the list may be old: refresh it the way a tap on a stale list does.
+        g_backgroundWake = false;
+        if (syncIsStale()) g_syncRequested = true;
+    }
+}
+
+// Light-sleep whenever there is nothing to do. The panel keeps its image and the chip keeps its RAM, so
+// the device wakes exactly as it was. It wakes for the next scheduled sync, or for a key or touch.
+void maybeSleep() {
+    if (!Config::kSleepEnabled) return;
+    const uint32_t now = millis();
+
+    if (g_syncRequested) return;
+    if (!Config::kSleepWhileCharging && BSP::getInstance().getBatteryState().isCharging) return;
+
+    // An overlay left open would keep the device awake indefinitely; close it after a while.
+    if (overlayOpen()) {
+        if (now - g_lastActivityMs >= Config::kOverlayIdleCloseMs) {
+            closeOverlays();
+            noteActivity(false);
+        }
+        return;
+    }
+
+    const uint32_t idleNeededMs = g_backgroundWake ? Config::kBackgroundSettleMs
+                                  : g_sawInput     ? Config::kInteractiveIdleSleepMs
+                                                   : Config::kNoInputWakeSleepMs;
+    if (now - g_lastActivityMs < idleNeededMs) return;
+
+    // A sync that's due (or about to be) runs first; maybeSync() has already had its turn this loop.
+    const int32_t untilSyncMs = (int32_t)(g_nextSyncMs - now);
+    if (untilSyncMs < (int32_t)Config::kMinSleepMs) return;
+
+    onWake(BSP::getInstance().lightSleep((uint32_t)untilSyncMs));
 }
 
 } // namespace
@@ -241,6 +337,7 @@ void loop() {
     handleTouch();
     handleKeys();
     maybeSync();
+    maybeSleep();
 
     delay(20);
 }

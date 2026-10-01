@@ -108,6 +108,7 @@ static void addHealthHeaders(HTTPClient& http) {
     const int rssi = WiFi.RSSI();
     if (rssi < 0) http.addHeader("X-Wifi-Rssi", String(rssi));
     http.addHeader("X-Free-Heap", String((unsigned)ESP.getFreeHeap()));
+    http.addHeader("X-Power", BSP::powerStats());
 
     // W3C traceparent, so the server's spans and logs for this sync share a trace id we can also
     // print here and match against serial output.
@@ -191,6 +192,7 @@ bool SyncClient::sync(ShoppingData& data, uint32_t wifiTimeoutMs) {
     _status.lastOk = ok;
     if (!ok) return false;
     _status.lastSuccessMs = millis();
+    BSP::resetPowerStats();
 
     // Adds that are still queued (their push failed transiently) aren't in the snapshot yet. Put them
     // back as local placeholders so they don't vanish from the screen - and, since this is what gets

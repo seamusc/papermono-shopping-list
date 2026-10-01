@@ -2,6 +2,8 @@
 
 #include <esp_log.h>
 #include <esp_sleep.h>
+#include <esp_timer.h>
+#include <driver/gpio.h>
 #include <driver/rtc_io.h>
 
 static constexpr const char* TAG = "BSP";
@@ -11,6 +13,110 @@ static constexpr uint32_t I2C_FREQ_FAST = 400000;
 static constexpr uint32_t I2C_FREQ_SAFE = 100000;
 
 namespace ShoppingList {
+
+namespace {
+
+// Power history for BSP::powerStats(). Plain RAM: light sleep keeps it.
+uint16_t s_wakes[5];       // indexed by WakeReason
+int64_t s_sleptMs = 0;     // total time spent in light sleep
+uint32_t s_statsBaseMs = 0;  // millis() when the stats were last cleared
+int64_t s_sleptAtBaseMs = 0;
+
+} // namespace
+
+String BSP::powerStats() {
+    const int64_t slept = s_sleptMs - s_sleptAtBaseMs;
+    int64_t awake = (int64_t)(millis() - s_statsBaseMs) - slept;
+    if (awake < 0) awake = 0;
+    char buf[112];
+    snprintf(buf, sizeof(buf), "timer=%u;touch=%u;key=%u;pb=%u;other=%u;awake_ms=%lu;slept_ms=%lu", s_wakes[0],
+             s_wakes[1], s_wakes[2], s_wakes[3], s_wakes[4], (unsigned long)awake, (unsigned long)slept);
+    return String(buf);
+}
+
+void BSP::resetPowerStats() {
+    memset(s_wakes, 0, sizeof(s_wakes));
+    s_statsBaseMs = millis();
+    s_sleptAtBaseMs = s_sleptMs;
+}
+
+WakeReason BSP::lightSleep(uint32_t sleepMs) {
+    // Never sleep with a refresh running: the panel needs the CPU to finish it.
+    M5.Display.waitDisplay();
+
+    if (_currentBrightness > 0) _brightnessBeforeSleep = _currentBrightness;
+    setFrontlight(0);
+    setLed(false, 0, 0);
+
+    // The PM1 holds its IRQ line low until its flags are cleared; left set, GPIO 1 would wake us at once.
+    if (_pm1Ready) {
+        _pm1.irqClearGpioAll();
+        _pm1.irqClearSysAll();
+        uint8_t btn = 0;
+        _pm1.irqGetBtnStatus(&btn, M5PM1_CLEAN_ALL);
+        bool flag = false;
+        _pm1.btnGetFlag(&flag);
+    }
+
+    // The side keys and the PM1 IRQ line (power button) wake by GPIO level. The touch interrupt is armed
+    // by M5.Power.lightSleep below, which also waits for it to be released first. A pin that is already
+    // low would wake the chip at once, so it is left out.
+    static const int kWakePins[] = {Pins::KEY1, Pins::KEY2, Pins::PM1_IRQ};
+    bool armed[3] = {false, false, false};
+    bool anyArmed = false;
+    for (int i = 0; i < 3; ++i) {
+        pinMode(kWakePins[i], INPUT_PULLUP);
+        if (digitalRead(kWakePins[i]) == LOW) {
+            ESP_LOGW(TAG, "GPIO %d is low going to sleep; not arming it", kWakePins[i]);
+            continue;
+        }
+        armed[i] = gpio_wakeup_enable((gpio_num_t)kWakePins[i], GPIO_INTR_LOW_LEVEL) == ESP_OK;
+        anyArmed = anyArmed || armed[i];
+    }
+    if (anyArmed) esp_sleep_enable_gpio_wakeup();
+
+    const int64_t before = esp_timer_get_time();
+    M5.Power.lightSleep((uint64_t)sleepMs * 1000ULL, /*touch_wakeup=*/true);
+    s_sleptMs += (esp_timer_get_time() - before) / 1000;
+
+    for (int i = 0; i < 3; ++i) {
+        if (armed[i]) gpio_wakeup_disable((gpio_num_t)kWakePins[i]);
+    }
+
+    WakeReason reason = WakeReason::Other;
+    switch (esp_sleep_get_wakeup_cause()) {
+    case ESP_SLEEP_WAKEUP_TIMER:
+        reason = WakeReason::Timer;
+        break;
+    case ESP_SLEEP_WAKEUP_EXT0:
+        reason = WakeReason::Touch;
+        break;
+    case ESP_SLEEP_WAKEUP_GPIO:
+        // Level wakeups: whichever line is still low is what woke us. A key held down wins over the
+        // power button's IRQ line.
+        if (digitalRead(Pins::KEY1) == LOW || digitalRead(Pins::KEY2) == LOW) reason = WakeReason::Key;
+        else if (digitalRead(Pins::PM1_IRQ) == LOW) reason = WakeReason::PowerButton;
+        break;
+    default:
+        break;
+    }
+    s_wakes[(int)reason]++;
+
+    if (reason == WakeReason::PowerButton) {
+        // The press that woke us is only a wake-up, not a request to power off: clear it, and ignore the
+        // button briefly in case M5Unified also latched a click.
+        if (_pm1Ready) {
+            uint8_t btn = 0;
+            _pm1.irqGetBtnStatus(&btn, M5PM1_CLEAN_ALL);
+            bool flag = false;
+            _pm1.btnGetFlag(&flag);
+        }
+        _ignorePowerButtonUntilMs = millis() + 1500;
+    }
+    // A person woke it: bring the light back. A timer wake is a background sync and stays dark.
+    if (reason != WakeReason::Timer) setFrontlight(_brightnessBeforeSleep);
+    return reason;
+}
 
 bool BSP::init(uint8_t initialBrightness) {
     ESP_LOGI(TAG, "Initializing M5Unified and Peripherals (Initial Brightness: %u%%)...", initialBrightness);
@@ -197,7 +303,7 @@ BatteryState BSP::getBatteryState() {
 
 bool BSP::checkPowerButton() {
     if (!_pm1Ready) return false;
-    if (millis() < 2500) {
+    if (millis() < 2500 || millis() < _ignorePowerButtonUntilMs) {
         // Ignore bootup / power-on transient and clear state
         M5.BtnPWR.wasClicked();
         return false;
