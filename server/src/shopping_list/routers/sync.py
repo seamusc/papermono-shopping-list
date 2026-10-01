@@ -51,6 +51,23 @@ def sync(
     free_heap = _reading(x_free_heap, 0, 1 << 30)
     # Only a short run of plain characters gets into the log; anything else is ignored, never an error.
     power = x_power if x_power and _POWER_RE.fullmatch(x_power) else None
+    # Ignoring a bad reading is deliberate (it must never fail a sync), but not silently.
+    rejected = [
+        header
+        for header, raw, value in (
+            ("X-Battery-Percent", x_battery_percent, battery),
+            ("X-Wifi-Rssi", x_wifi_rssi, rssi),
+            ("X-Free-Heap", x_free_heap, free_heap),
+            ("X-Power", x_power, power),
+        )
+        if raw is not None and value is None
+    ]
+    if rejected:
+        log.warning(
+            "ignored implausible device readings: %s",
+            ", ".join(rejected),
+            extra={"sync.rejected_headers": rejected},
+        )
     if x_firmware_version is not None:
         log.info(
             "sync from firmware %s (battery %s%%, rssi %s dBm, free heap %s%s)",
@@ -59,12 +76,29 @@ def sync(
             rssi,
             free_heap,
             f", power {power}" if power else "",
+            extra={
+                "device.firmware_version": x_firmware_version,
+                "device.battery_percent": battery,
+                "device.wifi_rssi": rssi,
+                "device.free_heap": free_heap,
+                "device.power": power,
+            },
         )
         telemetry.record_device_health(x_firmware_version, battery, rssi, free_heap)
     telemetry.syncs.add(1, {"firmware.version": x_firmware_version or "unknown"})
     offer = firmware.offer_for(request.app.state.settings, x_firmware_version)
     if offer:
         telemetry.firmware_offers.add(1, {"from": x_firmware_version, "to": offer.version})
+        log.info(
+            "offering firmware %s to device on %s",
+            offer.version,
+            x_firmware_version,
+            extra={
+                "firmware.from": x_firmware_version,
+                "firmware.to": offer.version,
+                "firmware.size": offer.size,
+            },
+        )
     now = datetime.now(UTC)
     body = SyncResponse(
         categories=repository.list_categories(conn),
@@ -75,6 +109,17 @@ def sync(
         ),
         synced_at=now.astimezone(request.app.state.tz).strftime("%H:%M"),
         firmware=offer,
+    )
+    log.info(
+        "sync served: %d item(s), next sync in %ds",
+        len(body.items),
+        body.next_sync_in_s,
+        extra={
+            "sync.items": len(body.items),
+            "sync.categories": len(body.categories),
+            "sync.next_sync_in_s": body.next_sync_in_s,
+            "sync.firmware_offered": offer is not None,
+        },
     )
     # `firmware` must be absent, not null, when there's no offer, but `response_model_exclude_none`
     # would also strip the legitimate nulls elsewhere (an item's category_id, quantity, unit). So

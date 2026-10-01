@@ -138,6 +138,26 @@ A Collector works the same way; only the endpoint and headers change. What's emi
   Wi-Fi RSSI and free heap each firmware version reported.
 - **Logs:** the `shopping_list` logger, correlated to the active trace.
 
+### What gets logged
+
+Every state change and request emits one record on the `shopping_list` logger. The message is
+human-readable; the detail is in structured attributes (`extra=`), exported as log fields over OTLP and
+appended as `[key=value ...]` to the stdout/journal line.
+
+| Event | Attributes (prefix) |
+|-------|---------------------|
+| Server start/stop, DB migration | `config.*`, `db.migration` |
+| Every request (health, autosuggest and static assets only when they fail) | `http.method`, `http.target`, `http.status_code`, `http.duration_ms`, `client.address`; 4xx is WARNING, 5xx and unhandled exceptions ERROR |
+| Category added / renamed / reordered / deleted | `category.id`, `category.name`, `category.old_name`, `category.sort_order`, `category.old_sort_order` |
+| Item added / renamed / moved / quantity changed / ticked / deleted, purchased items cleared | `item.*`, `category.id`, `category.old_id`, `items.removed` |
+| Aisle classification (incl. skipped and failed) | `item.name`, `category.name`, `classifier.outcome`, `classifier.duration_ms` |
+| Device sync, ignored device readings, sync response | `device.*`, `sync.*` |
+| Sync schedule changed | `schedule.*`, `schedule.old_*` |
+| Firmware offered / download started / unknown version requested | `firmware.*` |
+
+New code that changes state should log the same way: one INFO line, dotted attribute keys, no
+formatting of values into the message beyond what a human needs.
+
 Item names are included as span attributes and in log lines. Don't point this at a backend you
 wouldn't trust with your shopping list.
 

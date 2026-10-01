@@ -1,8 +1,11 @@
+import logging
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 from fastapi import Request
+
+log = logging.getLogger(__name__)
 
 UNCATEGORIZED_NAME = "Uncategorized"
 # Always sorts last: new aisles are appended just ahead of it (see repository.next_sort_order).
@@ -61,8 +64,10 @@ def _migrate_items_columns(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(items)")}
     if "quantity" not in existing:
         conn.execute("ALTER TABLE items ADD COLUMN quantity REAL")
+        log.info("migrated database: added items.quantity", extra={"db.migration": "items.quantity"})
     if "unit" not in existing:
         conn.execute("ALTER TABLE items ADD COLUMN unit TEXT")
+        log.info("migrated database: added items.unit", extra={"db.migration": "items.unit"})
 
 
 def init_db(db_path: Path) -> None:
