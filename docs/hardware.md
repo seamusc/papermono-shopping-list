@@ -235,7 +235,10 @@ be GPL-3.0 as well.
 
 ## Not yet explored
 
-- Light sleep between syncs, and measured current draw in each state.
+- Measured current draw in each state, including light sleep (see [firmware.md](firmware.md#sleep)).
+- Cutting the panel's analog supply during sleep (M5Stack's UserDemo does this 500 ms after a fast
+  refresh). It would save power, but it makes the next fast refresh rebuild the panel's history.
+- Longer sleeps by shutting the PMIC down with an RTC wake (touch cannot wake from that).
 - The RTC, NFC and the LoRa radio.
 - Grey levels beyond the two M5GFX modes used here.
 - Whether the C153-LITE needs any changes.

@@ -78,6 +78,10 @@ would otherwise block every edit behind it forever.
 
 ### When the device syncs
 
+Between syncs the device is light-sleeping (see [firmware.md](firmware.md#sleep)); a timer set from
+`next_sync_in_s` wakes it for each scheduled sync, and a key or touch wakes it for use. Everything
+below happens while it is awake.
+
 - At boot, straight after showing the cached list.
 - On the server's schedule: each sync response says how long to wait (`next_sync_in_s`,
   see [Sync schedule](api.md#sync-schedule)), so the device stays quiet overnight

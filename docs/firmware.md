@@ -172,8 +172,37 @@ When the battery drops to 3.45 V (resting, not charging), the device draws a
 "Battery Low" screen and powers off. E-paper keeps showing the last image with no
 power.
 
-Battery life hasn't been measured yet. The main loop polls touch every 20 ms and
-doesn't use light sleep between syncs, so expect days, not weeks.
+### Sleep
+
+Between syncs the device light-sleeps: the CPU stops and the radio is off, but RAM, the panel
+and the touch controller keep their state. It wakes with the list still on the glass, and a
+tap that wakes it is not lost. It wakes for:
+
+| Wake | What happens |
+|------|--------------|
+| **Timer** | The next scheduled sync (the server's `next_sync_in_s`). It syncs quietly, repaints the panel only if the list changed, and sleeps again about 1.5 s later. No LED, no "syncing...". |
+| **Touch** | The touch controller's interrupt (GPIO 4). Same as a key wake. |
+| **Side key or power button** | Wakes up for a person: the backlight returns to its previous level, it syncs if the list is more than 5 minutes old, and it sleeps after 30 s with no input (8 s if nothing was pressed at all). The wake itself, and a sync it starts, draw nothing on the panel. The power-button press that wakes it does not also power it off. |
+
+Things that keep it awake: a sync in progress or waiting, and an open keyboard, settings or
+quantity screen (closed after 2 minutes idle).
+
+Why light sleep and not deep sleep: deep sleep reboots the chip, so the panel driver starts from
+scratch and the panel came back blank on the first refresh after a wake. M5Stack's own Arduino
+guide keeps the display state through light sleep, and the best-known PaperMono firmware (the
+ESPHome Home Assistant project) sleeps this way for normal operation. Light sleep draws more than
+deep sleep would; the numbers below are unmeasured.
+
+The `X-Power` header on each sync reports wakes by reason and time awake against asleep since the
+previous sync (`timer=2;touch=1;key=0;pb=0;other=0;awake_ms=31400;slept_ms=600000`), and the
+server logs it. That is the way to check the device really sleeps.
+
+The header can lag: a quiet sync that changes nothing leaves the panel untouched, so
+"Synced 14:05" may be a few syncs old until the next repaint. Build with
+`-D SHOPPING_LIST_SLEEP=0` to keep the device awake (for debugging over serial: light sleep drops the
+USB serial port from the host).
+
+**Not yet measured:** current draw in each state.
 
 ## Troubleshooting
 

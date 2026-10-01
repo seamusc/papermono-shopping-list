@@ -29,6 +29,8 @@ for your own PaperMono firmware.
   if you tap the screen and the last sync is more than 5 minutes stale, and
   straight after an edit. Everything else works offline, and edits are queued
   on flash until the next sync.
+- **Light sleep.** Between syncs the CPU sleeps and the panel keeps showing the list. A timer wakes
+  it for each sync; the side keys, the power button and a touch wake it for use.
 - **Tidy power handling.** Power-button shutdown, with a deep-sleep fallback for
   when USB power stops the power IC switching off. The device turns itself off
   at a safe battery voltage. The frontlight is off by default.

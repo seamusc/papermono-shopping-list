@@ -58,6 +58,32 @@ constexpr uint32_t kOtaRetryAfterFailureMs = 24UL * 60UL * 60UL * 1000UL;
 // Give up on a download that hasn't delivered a byte for this long.
 constexpr uint32_t kOtaStallTimeoutMs = 15000;
 
+// --- Sleep ------------------------------------------------------------------------------------------
+// Between syncs the device light-sleeps: the CPU stops and the radio is off, but RAM, the panel and the
+// touch controller keep their state, so it wakes with the list still on the glass and a tap is not lost.
+// (Deep sleep was tried first; it reboots the chip, and the panel driver came back blank. M5Stack's own
+// guide and the best-known PaperMono firmware also use light sleep for normal operation.) Build with
+// -D SHOPPING_LIST_SLEEP=0 to keep the device awake, e.g. when debugging over serial.
+#ifndef SHOPPING_LIST_SLEEP
+#define SHOPPING_LIST_SLEEP 1
+#endif
+constexpr bool kSleepEnabled = SHOPPING_LIST_SLEEP != 0;
+// Sleep on USB power too, so what you test is what you ship. (Light sleep drops the USB serial port
+// from the host while it lasts.)
+constexpr bool kSleepWhileCharging = true;
+// Awake time with no input before sleeping, after a wake someone caused (a key press or a touch).
+constexpr uint32_t kInteractiveIdleSleepMs = 30UL * 1000UL;
+// A touch or key woke the device but nothing has been pressed since: it was probably a glance or a
+// false alarm, so don't stay up for the full idle time.
+constexpr uint32_t kNoInputWakeSleepMs = 8UL * 1000UL;
+// A timer wake that only syncs: sleep again this long after the sync (or the failed attempt) ends.
+constexpr uint32_t kBackgroundSettleMs = 1500;
+// An overlay (keyboard, settings, quantity) left open this long is closed, so it can't keep the
+// device awake.
+constexpr uint32_t kOverlayIdleCloseMs = 2UL * 60UL * 1000UL;
+// Don't bother sleeping for less than this; the wake would cost more than staying up.
+constexpr uint32_t kMinSleepMs = 3000;
+
 // Upper bound on queued offline edits; normal use keeps 0-3.
 constexpr size_t kMaxPendingActions = 100;
 

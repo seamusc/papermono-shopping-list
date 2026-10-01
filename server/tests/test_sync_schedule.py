@@ -180,6 +180,27 @@ def test_sync_reports_the_local_time_of_day(client):
     assert re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", client.get("/api/sync").json()["synced_at"])
 
 
+def test_sync_logs_device_power_history(client, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="shopping_list"):
+        resp = client.get(
+            "/api/sync",
+            headers={"X-Firmware-Version": "1.5.1", "X-Power": "boot=touch;timer=2;awake_ms=31400"},
+        )
+    assert resp.status_code == 200
+    assert "power boot=touch;timer=2;awake_ms=31400" in caplog.text
+
+
+def test_sync_ignores_a_garbled_power_header(client, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="shopping_list"):
+        resp = client.get("/api/sync", headers={"X-Firmware-Version": "1.5.1", "X-Power": "boot=<script>"})
+    assert resp.status_code == 200
+    assert "power " not in caplog.text
+
+
 def test_sync_delay_is_within_bounds_for_every_preset(client):
     for preset in PRESETS_BY_ID:
         client.put("/api/sync-schedule", json={"weekday": preset, "weekend": preset, "weekend_same": True})

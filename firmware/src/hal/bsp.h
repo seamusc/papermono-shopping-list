@@ -58,6 +58,9 @@ namespace IOEPins {
     constexpr uint8_t TOUCH_VDD_EN= M5IOE1_PIN_13;
 }
 
+// What ended a light sleep.
+enum class WakeReason { Timer, Touch, Key, PowerButton, Other };
+
 struct BatteryState {
     int voltageMv;
     int percentage;
@@ -92,6 +95,19 @@ public:
 
     BatteryState getBatteryState();
 
+    // Light-sleeps for at most `sleepMs` and returns what woke the device. Timer, a touch (the touch
+    // controller's interrupt), a side key and the power button all wake it. Everything is as it was on
+    // return, except that the frontlight and LED are off until a wake for a person restores the light.
+    // Finish any panel refresh first; this waits for one that's running but starts none.
+    WakeReason lightSleep(uint32_t sleepMs);
+
+    // One line of power history since the last successful sync, sent as the X-Power request header so
+    // the server log shows what the device has really been doing:
+    //   "timer=2;touch=1;key=0;pb=0;other=0;awake_ms=31400;slept_ms=600000"
+    // Call resetPowerStats() once a sync succeeds.
+    static String powerStats();
+    static void resetPowerStats();
+
 private:
     BSP() = default;
     ~BSP() = default;
@@ -105,6 +121,8 @@ private:
     bool _pm1Ready = false;
     bool _ioe1Ready = false;
     uint8_t _currentBrightness = 0;
+    uint8_t _brightnessBeforeSleep = 0;
+    uint32_t _ignorePowerButtonUntilMs = 0;
     uint32_t _ledOffUntil = 0;
 };
 

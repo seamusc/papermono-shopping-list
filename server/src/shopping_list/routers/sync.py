@@ -1,4 +1,5 @@
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime
 
@@ -9,6 +10,7 @@ from ..db import get_db
 from ..models import SyncResponse
 
 router = APIRouter(prefix="/api", tags=["sync"])
+_POWER_RE = re.compile(r"[a-z0-9_=;]{1,120}")
 log = logging.getLogger(__name__)
 
 
@@ -31,6 +33,8 @@ def sync(
     x_battery_percent: str | None = Header(default=None),
     x_wifi_rssi: str | None = Header(default=None),
     x_free_heap: str | None = Header(default=None),
+    # Free-form power history from deep-sleeping firmware, logged verbatim if it looks sane.
+    x_power: str | None = Header(default=None),
 ):
     """Full-state snapshot: everything a client needs to render the list, pre-sorted into aisle
     order, plus the whole catalog for offline autosuggest.
@@ -45,13 +49,16 @@ def sync(
     battery = _reading(x_battery_percent, 0, 100)
     rssi = _reading(x_wifi_rssi, -127, 0)
     free_heap = _reading(x_free_heap, 0, 1 << 30)
+    # Only a short run of plain characters gets into the log; anything else is ignored, never an error.
+    power = x_power if x_power and _POWER_RE.fullmatch(x_power) else None
     if x_firmware_version is not None:
         log.info(
-            "sync from firmware %s (battery %s%%, rssi %s dBm, free heap %s)",
+            "sync from firmware %s (battery %s%%, rssi %s dBm, free heap %s%s)",
             x_firmware_version,
             battery,
             rssi,
             free_heap,
+            f", power {power}" if power else "",
         )
         telemetry.record_device_health(x_firmware_version, battery, rssi, free_heap)
     telemetry.syncs.add(1, {"firmware.version": x_firmware_version or "unknown"})
