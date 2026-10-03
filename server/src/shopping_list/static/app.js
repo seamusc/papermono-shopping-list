@@ -22,8 +22,10 @@ const closeAislesBtn = document.getElementById("closeAislesBtn");
 const aisleList = document.getElementById("aisleList");
 const addAisleForm = document.getElementById("addAisleForm");
 const aisleInput = document.getElementById("aisleInput");
+const copyListBtn = document.getElementById("copyListBtn");
 const toast = document.getElementById("toast");
 
+let currentItems = [];
 let suggestTimer = null;
 let chosenCategoryId = null; // set when a suggestion is tapped
 
@@ -60,6 +62,7 @@ async function loadList() {
 }
 
 function renderList(items, categories) {
+  currentItems = items;
   listContainer.innerHTML = "";
   if (items.length === 0) {
     listContainer.appendChild(emptyMessage);
@@ -139,6 +142,40 @@ async function setItemCategory(id, categoryId) {
   await api(`/api/items/${id}`, { method: "PATCH", body: JSON.stringify({ category_id: categoryId }) });
   await loadList();
 }
+
+// ---- copy list ----
+
+// Uses the last-loaded items (no await before the write) so the click's user activation survives,
+// which Safari requires. Falls back to execCommand where the async clipboard API is unavailable
+// (plain-http LAN access).
+async function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("Copy failed");
+}
+
+let copyTimer = null;
+copyListBtn.addEventListener("click", async () => {
+  const names = currentItems.filter((item) => !item.purchased).map((item) => item.name);
+  if (names.length === 0) {
+    showError("Nothing to copy");
+    return;
+  }
+  await copyToClipboard(names.join("\n"));
+  copyListBtn.textContent = "Copied!";
+  clearTimeout(copyTimer);
+  copyTimer = setTimeout(() => (copyListBtn.textContent = "Copy"), 1500);
+});
 
 // ---- quantity editing ----
 
