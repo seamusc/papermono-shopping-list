@@ -194,8 +194,10 @@ docker build -t papermono-shopping-list server
 docker run -d --name shopping-list -p 8000:8000 -v shopping-list-data:/data papermono-shopping-list
 ```
 
-The image doesn't include the Claude Code CLI, so auto-sorting is off by default
-(`SHOPPING_LIST_CLASSIFIER=none`).
+The image bundles the Claude Code CLI, but auto-sorting is off by default
+(`SHOPPING_LIST_CLASSIFIER=none`). Set `SHOPPING_LIST_CLASSIFIER=claude` and pass
+`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` to turn it on. The CLI keeps its
+state under `$HOME`, which is `/data` in the image.
 
 ## Security
 
