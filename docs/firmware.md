@@ -52,6 +52,25 @@ pio run
 The first build downloads the ESP32 toolchain and libraries, which takes a few
 minutes.
 
+### Building in a container
+
+To keep PlatformIO and its toolchains off your machine, build in Docker instead:
+
+```sh
+export SHOPPING_LIST_WIFI_SSID='your-wifi-ssid'
+export SHOPPING_LIST_WIFI_PASSWORD='your-wifi-password'
+export SHOPPING_LIST_SERVER_URL='http://192.168.1.50:8000'   # http, no trailing slash
+just firmware            # or: firmware/builder/build.sh -c settings.env
+```
+
+The settings are injected at build time: the builder writes them into a
+`secrets.h` inside a throwaway copy of the source, so nothing is stored in the
+image or the working tree. `-c` takes a file of `KEY=VALUE` lines (no quotes).
+All three are always required -- the build fails immediately, naming what's
+missing, if any is unset; there is no fallback to an existing `secrets.h` or to
+`secrets.example.h`. The image is written to `firmware/dist/<version>.bin`;
+toolchains are cached in the `papermono-pio` Docker volume (about 2.5 GB).
+
 ## Back up the device first
 
 Before flashing anything onto a PaperMono for the first time, save a full copy of

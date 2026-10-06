@@ -54,8 +54,12 @@ jobs:
           path: ~/.platformio
           key: pio-${{ hashFiles('firmware/platformio.ini') }}
       - run: pip install platformio
-      - run: cp src/secrets.example.h src/secrets.h
+      - run: |
+          cat > src/secrets.h <<'EOF'
+          #pragma once
+          #define SHOPPING_LIST_WIFI_SSID "ci-ssid"
+          #define SHOPPING_LIST_WIFI_PASSWORD "ci-password"
+          #define SHOPPING_LIST_SERVER_URL "http://ci.invalid"
+          EOF
       - run: pio run
-      # Checks the merge step works. The image isn't published: it has placeholder Wi-Fi details
-      # baked in, and flashing it would overwrite the credentials stored on a real device.
       - run: tools/make_factory_image.sh
