@@ -1,4 +1,14 @@
-# PaperMono Shopping List
+<p align="center">
+  <img src="docs/images/social-preview.png" alt="PaperMono Shopping List — E-paper shopping list for the M5Stack PaperMono" width="75%">
+</p>
+
+<h1 align="center">PaperMono Shopping List</h1>
+
+<p align="center">
+  <em>Firmware for the M5Stack PaperMono e-paper device — a household shopping list that stays in sync with a phone web app.</em>
+</p>
+
+<br>
 
 Firmware for the [M5Stack PaperMono](https://docs.m5stack.com/en/core/PaperMono)
 e-paper device. It turns the device into a household shopping list that lives on
