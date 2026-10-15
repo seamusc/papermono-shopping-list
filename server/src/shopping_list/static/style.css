@@ -288,3 +288,27 @@ a.icon-btn {
 .ticks { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .toast.ok { background: var(--accent); }
+
+/* Catalogue page */
+.catalog { display: grid; gap: 0.5rem; }
+.catalog .hint { margin: 0; }
+.catalog-list { list-style: none; padding: 0; margin: 0; }
+.catalog-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 0.4rem;
+}
+.catalog-row .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.catalog-row input[type="text"] { padding: 0.45rem; min-width: 0; }
+.catalog-row .category-select { max-width: 7.5rem; font-size: 0.8rem; padding: 0.3rem; }
+.secondary-btn { padding: 0.3rem 0.6rem; background: var(--card); color: var(--ink); border: 1px solid var(--border); font-size: 0.85rem; }
+.secondary-btn.danger { color: #b3261e; border-color: #e8c4c1; }
+@media (max-width: 480px) {
+  .catalog-row { flex-wrap: wrap; }
+  .catalog-row .name { flex-basis: 100%; }
+}

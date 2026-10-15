@@ -251,3 +251,58 @@ def test_index_serves_web_ui_with_versioned_assets(client):
     assert resp.status_code == 200
     assert re.search(r"/static/app\.js\?v=[0-9a-f]{10}", resp.text)
     assert resp.headers["cache-control"] == "no-cache"
+
+
+def test_catalog_list_is_alphabetical(client):
+    client.post("/api/items", json={"name": "Milk"})
+    client.post("/api/items", json={"name": "Apples"})
+    names = [e["name"] for e in client.get("/api/catalog").json()]
+    assert names == ["Apples", "Milk"]
+
+
+def test_catalog_rename_fixes_typo_and_keeps_list_item(client):
+    client.post("/api/items", json={"name": "Bananna"})
+    resp = client.patch("/api/catalog", params={"name": "Bananna"}, json={"name": "Banana"})
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "Banana"
+    names = [e["name"] for e in client.get("/api/catalog").json()]
+    assert names == ["Banana"]
+    assert [i["name"] for i in client.get("/api/sync").json()["items"]] == ["Bananna"]
+
+
+def test_catalog_move_to_other_category(client):
+    cat = client.post("/api/categories", json={"name": "Produce"}).json()
+    client.post("/api/items", json={"name": "Tomato"})
+    resp = client.patch("/api/catalog", params={"name": "Tomato"}, json={"category_id": cat["id"]})
+    assert resp.json()["category_name"] == "Produce"
+
+
+def test_catalog_rename_onto_existing_name_conflicts(client):
+    client.post("/api/items", json={"name": "Milk"})
+    client.post("/api/items", json={"name": "Mlk"})
+    resp = client.patch("/api/catalog", params={"name": "Mlk"}, json={"name": "milk"})
+    assert resp.status_code == 409
+
+
+def test_catalog_patch_rejects_unknown_entry_blank_name_and_category(client):
+    client.post("/api/items", json={"name": "Milk"})
+    assert client.patch("/api/catalog", params={"name": "Nope"}, json={"name": "x"}).status_code == 404
+    assert client.patch("/api/catalog", params={"name": "Milk"}, json={"name": "  "}).status_code == 400
+    assert (
+        client.patch("/api/catalog", params={"name": "Milk"}, json={"category_id": 9999}).status_code == 400
+    )
+
+
+def test_catalog_delete_removes_entry_only(client):
+    client.post("/api/items", json={"name": "Milk"})
+    assert client.delete("/api/catalog", params={"name": "Milk"}).status_code == 204
+    assert client.get("/api/catalog").json() == []
+    assert len(client.get("/api/sync").json()["items"]) == 1
+    assert client.delete("/api/catalog", params={"name": "Milk"}).status_code == 404
+
+
+def test_catalog_page_served(client):
+    resp = client.get("/catalog")
+    assert resp.status_code == 200
+    assert re.search(r"/static/catalog\.js\?v=[0-9a-f]{10}", resp.text)
+    assert client.get("/static/catalog.js").status_code == 200

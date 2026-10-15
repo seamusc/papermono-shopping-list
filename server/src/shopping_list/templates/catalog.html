@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Catalogue</title>
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
+</head>
+<body>
+<header class="topbar">
+  <h1>Catalogue</h1>
+  <div class="topbar-actions">
+    <a href="/" class="icon-btn" aria-label="Back to the shopping list">List</a>
+  </div>
+</header>
+
+<main class="catalog">
+  <p class="hint">Every item name that autosuggests and decides which aisle a new item lands in. Fix a typo, move a name to another aisle, or delete it. Items already on your list keep their own name.</p>
+
+  <input id="filterInput" type="text" placeholder="Filter…" maxlength="64" autocomplete="off" aria-label="Filter the catalogue">
+  <p class="hint" id="countLabel"></p>
+
+  <ul class="catalog-list" id="catalogList">
+    <li class="empty" id="loadingMessage">Loading…</li>
+  </ul>
+</main>
+
+<div id="toast" class="toast hidden" role="alert"></div>
+
+<script src="/static/catalog.js?v={{ static_version }}"></script>
+</body>
+</html>

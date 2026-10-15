@@ -61,7 +61,7 @@ def _static_version() -> str:
     the browser hasn't already cached.
     """
     h = hashlib.sha256()
-    for name in ("app.js", "schedule.js", "style.css"):
+    for name in ("app.js", "schedule.js", "catalog.js", "style.css"):
         h.update((STATIC_DIR / name).read_bytes())
     return h.hexdigest()[:10]
 
@@ -160,6 +160,10 @@ def create_app(settings: Settings | None = None, classifier: Classifier | None =
     @app.get("/schedule", response_class=HTMLResponse, include_in_schema=False)
     def schedule_page(request: Request):
         return templates.TemplateResponse(request, "schedule.html", {"static_version": static_version})
+
+    @app.get("/catalog", response_class=HTMLResponse, include_in_schema=False)
+    def catalog_page(request: Request):
+        return templates.TemplateResponse(request, "catalog.html", {"static_version": static_version})
 
     @app.get("/api/health", tags=["health"])
     def health():

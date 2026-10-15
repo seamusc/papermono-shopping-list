@@ -43,6 +43,14 @@ A new database starts with only the `Uncategorized` aisle. Add your real aisles
 from the web UI (**Aisles**) in the order you walk the shop. The classifier only
 runs once at least one aisle exists.
 
+## Catalogue
+
+The catalogue is every item name ever added, with the aisle it files under (it feeds
+autosuggest and the aisle a new item lands in). Open **Catalogue** at the top of the web
+UI, or `/catalog`, to filter it, rename a misspelled name, move a name to another aisle, or
+delete it. Items already on the list keep their own name. It uses the
+[catalog API](api.md#catalog).
+
 ## Sync schedule
 
 The device doesn't decide when to sync; the server tells it. Every sync response

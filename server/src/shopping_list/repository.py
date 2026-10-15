@@ -198,6 +198,25 @@ def suggest(conn: sqlite3.Connection, query: str, limit: int) -> list[CatalogEnt
     return [_catalog_entry(r) for r in rows]
 
 
+def get_catalog_entry(conn: sqlite3.Connection, name: str) -> CatalogEntry | None:
+    row = conn.execute(
+        _CATALOG_SELECT + " WHERE catalog.name = :name", {"uncategorized": UNCATEGORIZED_NAME, "name": name}
+    ).fetchone()
+    return _catalog_entry(row) if row else None
+
+
+def update_catalog_entry(
+    conn: sqlite3.Connection, name: str, new_name: str, category_id: int | None
+) -> CatalogEntry:
+    """Rename a catalog entry and/or move it to another aisle. Items on the list are untouched."""
+    conn.execute("UPDATE catalog SET name = ?, category_id = ? WHERE name = ?", (new_name, category_id, name))
+    return get_catalog_entry(conn, new_name)
+
+
+def delete_catalog_entry(conn: sqlite3.Connection, name: str) -> None:
+    conn.execute("DELETE FROM catalog WHERE name = ?", (name,))
+
+
 def remember(conn: sqlite3.Connection, item_name: str, category_id: int) -> None:
     """Record (or correct) which aisle an item name belongs to."""
     conn.execute(

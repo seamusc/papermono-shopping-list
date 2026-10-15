@@ -224,6 +224,23 @@ Case-insensitive substring match, with prefix matches first. `limit` is 1 to 25
 (default 8), and an empty `q` returns `[]`. Used by the web UI as you type; the
 device searches its own copy of the catalog instead.
 
+### `GET /api/catalog` → `200 [CatalogEntry]`
+
+The whole catalog, alphabetical.
+
+### `PATCH /api/catalog?name=Bananna` → `200 CatalogEntry`
+
+Body: `{ "name": "Banana", "category_id": 3 }`, both optional. Renames the entry
+and/or moves it to another aisle; `name` in the query string is the current
+(exact) name. Items already on the list keep their own name. `404` if there's no
+such entry, `400` for a blank name or unknown `category_id`, `409` if the new
+name matches another entry (case-insensitive).
+
+### `DELETE /api/catalog?name=Bananna` → `204`
+
+Forgets a name so it stops autosuggesting. Items on the list are untouched, and
+adding the name again re-creates the entry. `404` if there's no such entry.
+
 ## Health
 
 ### `GET /api/health` → `{"status": "ok"}`
