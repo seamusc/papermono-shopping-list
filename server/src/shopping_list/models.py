@@ -58,6 +58,11 @@ class CatalogEntry(BaseModel):
     category_name: str
 
 
+class CatalogUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    category_id: int | None = None
+
+
 class FirmwareOffer(BaseModel):
     version: str
     # Relative to the server address the device already has.
