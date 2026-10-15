@@ -36,6 +36,7 @@ def suggest(
 def _require_entry(conn: sqlite3.Connection, name: str) -> CatalogEntry:
     entry = repository.get_catalog_entry(conn, name)
     if entry is None:
+        log.warning("catalog entry %r not found", name, extra={"catalog.name": name})
         raise HTTPException(status_code=404, detail="Catalog entry not found")
     return entry
 
@@ -55,29 +56,57 @@ def update_entry(
     if body.name is not None:
         new_name = body.name.strip()
         if not new_name:
+            log.warning(
+                "rejected blank rename of catalog entry %r", entry.name, extra={"catalog.name": entry.name}
+            )
             raise HTTPException(status_code=400, detail="name cannot be blank")
         clash = conn.execute(
             "SELECT name FROM catalog WHERE name = ? COLLATE NOCASE AND name != ?", (new_name, entry.name)
         ).fetchone()
         if clash:
+            log.warning(
+                "rejected rename of catalog entry %r to %r: clashes with %r",
+                entry.name,
+                new_name,
+                clash["name"],
+                extra={
+                    "catalog.name": entry.name,
+                    "catalog.new_name": new_name,
+                    "catalog.clash_name": clash["name"],
+                },
+            )
             raise HTTPException(status_code=409, detail=f"Catalog already has {clash['name']!r}")
 
     category_id = entry.category_id
     if body.category_id is not None:
         if repository.get_category(conn, body.category_id) is None:
+            log.warning(
+                "rejected move of catalog entry %r: unknown category id %d",
+                entry.name,
+                body.category_id,
+                extra={"catalog.name": entry.name, "category.id": body.category_id},
+            )
             raise HTTPException(status_code=400, detail="Unknown category_id")
         category_id = body.category_id
 
+    if new_name == entry.name and category_id == entry.category_id:
+        log.info("catalog entry %r unchanged", entry.name, extra={"catalog.name": entry.name})
+        return entry
+
     updated = repository.update_catalog_entry(conn, entry.name, new_name, category_id)
     log.info(
-        "updated catalog entry %r -> %r (%s)",
+        "updated catalog entry %r -> %r, aisle %r -> %r",
         entry.name,
         updated.name,
+        entry.category_name,
         updated.category_name,
         extra={
             "catalog.old_name": entry.name,
             "catalog.name": updated.name,
+            "category.old_id": entry.category_id,
             "category.id": updated.category_id,
+            "category.old_name": entry.category_name,
+            "category.name": updated.category_name,
         },
     )
     return updated
@@ -88,4 +117,13 @@ def delete_entry(name: str = Query(min_length=1, max_length=128), conn: sqlite3.
     """Forget a name so it stops autosuggesting. Items already on the list are untouched."""
     entry = _require_entry(conn, name)
     repository.delete_catalog_entry(conn, entry.name)
-    log.info("deleted catalog entry %r", entry.name, extra={"catalog.name": entry.name})
+    log.info(
+        "deleted catalog entry %r (aisle %r)",
+        entry.name,
+        entry.category_name,
+        extra={
+            "catalog.name": entry.name,
+            "category.id": entry.category_id,
+            "category.name": entry.category_name,
+        },
+    )
